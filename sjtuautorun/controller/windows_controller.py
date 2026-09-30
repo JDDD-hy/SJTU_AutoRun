@@ -76,7 +76,8 @@ class WindowsController:
             self.restart_android()
             time.sleep(15)
 
-        dev_name = f"ANDROID:///{self.emulator_name}"
+        # LDPlayer rejects Minicap installation; use its working Java screenshot backend.
+        dev_name = f"ANDROID:///{self.emulator_name}?cap_method=JAVACAP"
 
         from logging import ERROR, getLogger
 

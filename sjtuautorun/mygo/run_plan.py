@@ -27,30 +27,61 @@ class RunPlan:
         self.plan_args = plan_args
         assert len(plan_args["points"]) >= 2, "请输入两个以上途径点"
 
-    def start_run(self):
+    def start_run(self, timeout=60):
         # 初始化位置
         self.timer.change_location(self.plan_args["points"][0][0], self.plan_args["points"][0][1])
 
-        # 确认权限
-        ret = self.timer.wait_images([IMG.run_image[1]] + [IMG.confirm_image[2:]])
-        if ret is None:
-            raise CriticalErr("Cannot start running")
-        elif ret == 0:
-            pass
-        else:
-            while self.timer.confirm(timeout=0.5):
-                pass
+        deadline = time.monotonic() + timeout
+        start_clicked = False
+        go_clicked = False
+        last_click = None
+        last_click_time = float("-inf")
+        while time.monotonic() < deadline:
+            self.timer.update_screen()
+            # Permission dialogs take priority over buttons visible behind them.
+            pos = None
+            state = None
+            permission_titles = [IMG.auto_confirm_image["permission_title"],
+                                 IMG.auto_confirm_image["permission_title_live"]]
+            on_run_page = self.timer.image_exist(IMG.auto_confirm_image["run_page_title"], 0, 0.9)
+            if self.timer.image_exist(permission_titles, 0, 0.9):
+                pos = self.timer.get_image_position(IMG.auto_confirm_image["permission_ok"], 0, 0.9)
+                state = "permission"
+            else:
+                # Both app confirmations use 好的; require the running-page heading.
+                if on_run_page:
+                    pos = self.timer.get_image_position(IMG.auto_confirm_image["permission_ok"], 0, 0.9)
+                    state = "permission" if pos else None
+                # Keep the existing Android permission template; unknown dialogs time out.
+                if not pos:
+                    pos = self.timer.get_image_position(IMG.confirm_image[3], 0, 0.9)
+                    state = "allow" if pos else None
+                if not pos and self.timer.image_exist(IMG.run_image[2], 0, 0.9):
+                    self.timer.logger.info("Running screen detected; advancing route.")
+                    self.run()
+                    return
+                if not pos and not start_clicked:
+                    pos = self.timer.get_image_position(IMG.run_image[1], 0, 0.9)
+                    state = "start" if pos else None
+                if not pos and not on_run_page and not go_clicked and not start_clicked:
+                    pos = self.timer.get_image_position(IMG.start_image[3], 0, 0.9)
+                    state = "go_running" if pos else None
 
-        # 启动跑步
-        pos = self.timer.wait_image(IMG.run_image[1])
-        if pos is None:
-            raise ImageNotFoundErr("Cannot find start button")
-        self.timer.Android.click(pos[0], pos[1])
+            # Debounce slow transitions; identical consecutive dialogs may need another click.
+            click = (state, pos) if pos else None
+            if click and (click != last_click or time.monotonic() - last_click_time >= 2):
+                self.timer.logger.info(f"Auto start: clicking {state} at {pos}")
+                self.timer.Android.click(*pos)
+                last_click_time = time.monotonic()
+                if state == "start":
+                    start_clicked = True
+                elif state == "go_running":
+                    go_clicked = True
+            last_click = click
+            time.sleep(0.25)
 
-        if self.timer.wait_image(IMG.run_image[2]) is not None:
-            self.run()
-        else:
-            raise CriticalErr("Cannot start running")
+        self.timer.log_screen()
+        raise CriticalErr("Auto start timed out: no recognized running screen. Check the saved screenshot.")
 
     def run(self):
         time.sleep(self.config.DELAY)
