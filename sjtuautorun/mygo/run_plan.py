@@ -1,5 +1,6 @@
 import os
 import random
+import subprocess
 import time
 import numpy as np
 
@@ -9,6 +10,9 @@ from sjtuautorun.controller.run_timer import Timer
 from sjtuautorun.utils.io import yaml_to_dict, recursive_dict_update
 from sjtuautorun.utils.math_functions import calculate_geo_distance
 from sjtuautorun.constants.image_templates import IMG
+from sjtuautorun.utils.run_result import read_result_screen, is_run_result, is_sports_home
+
+PAUSE_IMAGES = [IMG.run_image[2], IMG.auto_finish_image["pause_button"]]
 
 
 class RunPlan:
@@ -27,9 +31,10 @@ class RunPlan:
         self.plan_args = plan_args
         assert len(plan_args["points"]) >= 2, "请输入两个以上途径点"
 
-    def start_run(self, timeout=60):
+    def start_run(self, timeout=60, run_route=True):
         # 初始化位置
-        self.timer.change_location(self.plan_args["points"][0][0], self.plan_args["points"][0][1])
+        if run_route:
+            self.timer.change_location(self.plan_args["points"][0][0], self.plan_args["points"][0][1])
 
         deadline = time.monotonic() + timeout
         start_clicked = False
@@ -56,9 +61,10 @@ class RunPlan:
                 if not pos:
                     pos = self.timer.get_image_position(IMG.confirm_image[3], 0, 0.9)
                     state = "allow" if pos else None
-                if not pos and self.timer.image_exist(IMG.run_image[2], 0, 0.9):
-                    self.timer.logger.info("Running screen detected; advancing route.")
-                    self.run()
+                if not pos and self.timer.image_exist(PAUSE_IMAGES, 0, 0.9):
+                    self.timer.logger.info("Running screen detected.")
+                    if run_route:
+                        self.run()
                     return
                 if not pos and not start_clicked:
                     pos = self.timer.get_image_position(IMG.run_image[1], 0, 0.9)
@@ -82,6 +88,63 @@ class RunPlan:
 
         self.timer.log_screen()
         raise CriticalErr("Auto start timed out: no recognized running screen. Check the saved screenshot.")
+
+    def finish_run(self, hold_seconds=3.5, timeout=30, allow_short_test=False):
+        """Pause, hold the detected end button, and verify the app's result page."""
+        if not 0.2 < hold_seconds <= 15:
+            raise ValueError("End hold must be greater than 0.2 and at most 15 seconds")
+        self.timer.update_screen()
+        pause = self.timer.get_image_position(PAUSE_IMAGES, 0, 0.9)
+        if pause:
+            self.timer.Android.click(*pause)
+        end = self.timer.wait_image([IMG.run_image[4], IMG.auto_finish_image["end_button"]],
+                                    confidence=0.9, timeout=10)
+        if not end:
+            self.timer.log_screen()
+            raise CriticalErr("Cannot recognize end button; finish the recording manually.")
+        self.timer.logger.info(f"Auto finish: holding {end} for {hold_seconds} seconds")
+        self.timer.Android.long_tap(*end, duration=hold_seconds)
+        deadline = time.monotonic() + timeout
+        path = os.path.join(self.config.log_dir, "run-result.png")
+        result = {"confirmed": False, "discarded": False, "text": "", "screenshot": path, "error": ""}
+        short_confirmed = False
+        while time.monotonic() < deadline:
+            time.sleep(1)
+            self.timer.update_screen()
+            self.timer.logger.log_image(self.timer.screen, "run-result.png", ignore_existed_image=True)
+            if self.timer.image_exist(IMG.auto_finish_image["short_run_warning"], 0, 0.9):
+                if not allow_short_test:
+                    result["error"] = "应用提示距离过短、不计入成绩，请手动核实是否结束。"
+                    return result
+                if not short_confirmed:
+                    confirm = self.timer.get_image_position(IMG.auto_finish_image["confirm_short_run"], 0, 0.9)
+                    if confirm:
+                        self.timer.Android.click(*confirm)
+                        self.timer.logger.info("Button test: confirmed ending the short, uncredited record.")
+                        short_confirmed = True
+                continue
+            if self.timer.image_exist([*PAUSE_IMAGES, IMG.run_image[4],
+                                       IMG.auto_finish_image["end_button"]], 0, 0.9):
+                continue
+            if short_confirmed and self.timer.image_exist(IMG.run_image[1], 0, 0.9):
+                result.update(confirmed=True, discarded=True, text="")
+                self.timer.logger.info("Button test finished; returned to the start screen.")
+                return result
+            try:
+                result["text"] = read_result_screen(path, timeout=max(1, min(15, deadline - time.monotonic())))
+            except (OSError, ValueError, TimeoutError, subprocess.SubprocessError) as exc:
+                result["error"] = str(exc)
+                return result
+            if is_run_result(result["text"]):
+                result["confirmed"] = True
+                self.timer.logger.info("Result page detected; recording has ended.")
+                return result
+            if short_confirmed and is_sports_home(result["text"]):
+                result.update(confirmed=True, discarded=True, text="")
+                self.timer.logger.info("Button test finished; returned to sports home without a credited result.")
+                return result
+        result["error"] = "未识别到结果页，请在应用中核实是否已结束。"
+        return result
 
     def run(self):
         time.sleep(self.config.DELAY)
