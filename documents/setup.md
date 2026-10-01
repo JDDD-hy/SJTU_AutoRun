@@ -47,7 +47,7 @@ points: [] # 每项为 [经度, 纬度]；填写完整路线后才能运行
 
 ## 3. 启动与结束
 
-新版应用的按钮与旧图片模板不完全匹配，目前采用手动起跑。把以下代码保存为根目录 `run_selected_route.py`：
+以下入口自动识别起跑前确认，并在路线完成后点击暂停、长按结束。把代码保存为根目录 `run_selected_route.py`：
 
 ```python
 import os
@@ -62,16 +62,23 @@ plan = RunPlan(timer)
 if plan.plan_args["mode"] != "single_trip":
     raise ValueError("Use single_trip for this launcher")
 print("Plan:", timer.config.plan, "Pace:", plan.plan_args["speed"])
-timer.change_location(*plan.plan_args["points"][0])
-input("Start recording in the app, then press Enter here: ")
-plan.run()
-print("Route finished. End recording manually in the app.")
+plan.start_run()
+result = plan.finish_run()
+print("App result:" if result["confirmed"] else "Check recording in the app:")
+print(result["text"] if result["confirmed"] else result["error"])
+print("Screenshot:", result["screenshot"])
+input("Press Enter to close: ")
+if not result["confirmed"]:
+    raise SystemExit(1)
 ```
 
 1. 确认旧脚本已退出，打开模拟器和应用。
 2. 执行 `.\.venv\python.exe -u run_selected_route.py`，等待终端提示。
-3. 进入“运动健康”，两次确认脚本自动点击，随后点击开始跑步，识别到跑步状态并推进坐标。
-4. 检查里程增长；脚本完成后，在应用内手动结束记录。
+3. 60 秒内进入“运动健康”或跑步页面；脚本依次识别“去跑步 → 好的 → 好的 → 开始跑步”，缺席的确认页直接跳过。
+4. 确认应用计时、里程增长；路线完成后脚本自动点击暂停、长按结束 3.5 秒。
+5. 查看终端的应用结果 OCR 原文和结果截图；窗口等待回车后退出。识别失败时需在应用中核实并手动处理。
+
+Windows OCR 需要系统已安装相应语言的识别组件。纯按键实机测试已通过；完整路线结束后的正式结果页 OCR 仍待实机验证。短记录“不计入成绩”提示在正式模式下留给使用者确认，不会自动丢弃。
 
 中途停止用脚本终端的 Ctrl+C。**停止脚本不会结束应用记录**，也不要同时运行两份定位脚本。
 
@@ -80,7 +87,7 @@ print("Route finished. End recording manually in the app.")
 | 问题 | 处理 |
 | --- | --- |
 | 雷电模拟器无法联网 | 关闭雷电模拟器中的“虚拟服务”，重启模拟器后重新检查联网 |
-| `Cannot start running`、找不到起跑按钮 | 使用上面的手动起跑流程；原入口的自动导航尚未修复 |
+| 起跑识别超时、找不到按钮 | 查看日志截图；必要时把 `plan.start_run()` 替换为先设置首点、手动开始计时并回车、再调用 `plan.run()` |
 | `Minicap setup up failed` | 本次验证中报错后仍可取得截图并执行路线；结合后续连接状态和实际里程判断，未根治该错误 |
 | 改了路线却仍运行旧路线 | 检查 `plan`、`PLAN_ROOT` 和实际加载的 YAML |
 | 起点错误 | 先设首点、等地图更新，再开始应用计时 |

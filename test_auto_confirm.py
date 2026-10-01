@@ -6,7 +6,6 @@ from sjtuautorun.constants.data_roots import DATA_ROOT
 from sjtuautorun.constants.image_templates import IMG
 from sjtuautorun.mygo import RunPlan
 
-
 def check_auto_start():
     """Exercise the real start loop without moving the emulator or recording a run."""
     templates = {
@@ -16,6 +15,7 @@ def check_auto_start():
         "permission": IMG.auto_confirm_image["permission_ok"],
         "allow": IMG.confirm_image[3],
         "start": IMG.run_image[1], "running": IMG.run_image[2],
+        "running_new": IMG.auto_finish_image["pause_button"],
         "go_running": IMG.start_image[3],
     }
     scenarios = [
@@ -28,6 +28,7 @@ def check_auto_start():
          ["permission", "allow", "start", "run"]),
         ([{"start"}, {"running"}], ["start", "run"]),
         ([{"running"}], ["run"]),
+        ([{"running_new"}], ["run"]),
         ([{"start"}, {"title", "permission"}, {"allow"}, {"running"}],
          ["start", "permission", "allow", "run"]),
         ([{"title", "permission"}] * 3 + [{"running"}], ["permission", "run"]),
@@ -66,7 +67,6 @@ def check_auto_start():
                 timer.log_screen.assert_not_called()
         assert events == expected, (screens, events, expected)
         timer.change_location.assert_called_once()
-
 
 if __name__ == "__main__":
     check_auto_start()
