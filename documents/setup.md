@@ -51,16 +51,21 @@ points: [] # 每项为 [经度, 纬度]；填写完整路线后才能运行
 
 ```python
 import os
+import random
 
 from sjtuautorun.constants.data_roots import DATA_ROOT
 from sjtuautorun.mygo import RunPlan
 from sjtuautorun.scripts.main import start_script_emulator
+from sjtuautorun.utils.route_distance import route_for_distance
 
 timer = start_script_emulator(None)
 timer.config.PLAN_ROOT = timer.config.PLAN_ROOT or os.path.join(DATA_ROOT, "plans")
 plan = RunPlan(timer)
 if plan.plan_args["mode"] != "single_trip":
     raise ValueError("Use single_trip for this launcher")
+target_km = random.uniform(4.05, 4.30)
+plan.plan_args["points"] = route_for_distance(plan.plan_args["points"], target_km * 1000)
+print("Planned distance:", f"{target_km:.3f} km")
 print("Plan:", timer.config.plan, "Pace:", plan.plan_args["speed"])
 plan.start_run()
 result = plan.finish_run()
@@ -71,6 +76,8 @@ input("Press Enter to close: ")
 if not result["confirmed"]:
     raise SystemExit(1)
 ```
+
+示例每次随机选择 4.05–4.30 km 的计划距离，仅在内存中调整当前配置的路线，不改写 YAML。到达原路线终点后，必要时沿原路回走一段；目标超过原路线加一次完整回走的总长度会报错。请使用长度足够的 `single_trip` 路线；可修改 `random.uniform` 的范围，两个边界都应大于 4 km。应用实际里程以结果页为准。离线检查：`python test_route_distance.py`。
 
 1. 确认旧脚本已退出，打开模拟器和应用。
 2. 执行 `.\.venv\python.exe -u run_selected_route.py`，等待终端提示。
